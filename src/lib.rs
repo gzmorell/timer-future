@@ -101,23 +101,13 @@ pub mod build_an_executor_to_run_timer_future {
                 match self.task_receiver.recv() {
                     Ok(arc_task) => {
                         eprintln!(
-                            "{}",
+                            "{} {}",
+                            arc_task.task_name,
                             "running task - start, got task from receiver"
                                 .to_string()
-                                .yellow()
+                                .yellow(),
                         );
                         let mut future_in_task = arc_task.future.lock().unwrap();
-                        // let future_to_poll = &mut *future_in_task;
-                        // let waker = waker_ref(&arc_task);
-                        // let mut context = Context::from_waker(&waker);
-                        // match future_to_poll.poll_unpin(&mut context) {
-                        //     std::task::Poll::Pending => {
-                        //         eprintln!("{}", "task is still pending".to_string().yellow());
-                        //     }
-                        //     std::task::Poll::Ready(()) => {
-                        //         eprintln!("{}", "task is ready".to_string().green());
-                        //     }
-                        // }
                         match future_in_task.take() {
                             Some(mut future) => {
                                 let waker = waker_ref(&arc_task);
@@ -132,13 +122,15 @@ pub mod build_an_executor_to_run_timer_future {
                                 match poll_result.is_pending() {
                                     false => {
                                         eprintln!(
-                                            "{}",
+                                            "{} {}",
+                                            &arc_task.task_name,
                                             "running task is completed".to_string().green()
                                         );
                                     }
                                     true => {
                                         eprintln!(
-                                            "{}",
+                                            "{} {}",
+                                            &arc_task.task_name,
                                             "running task is still pending, putting back in slot"
                                                 .to_string()
                                                 .yellow()
@@ -171,11 +163,12 @@ pub mod build_an_executor_to_run_timer_future {
     }
 
     impl Spawner {
-        pub fn spawn(&self, future: impl Future<Output = ()> + 'static + Send) {
+        pub fn spawn(&self, future: impl Future<Output = ()> + 'static + Send, name: &'static str) {
             let pinned_boxed_future = future.boxed();
             let task = Arc::new(Task {
                 future: Mutex::new(Some(pinned_boxed_future)),
                 task_sender: self.task_sender.clone(),
+                task_name: name,
             });
             eprintln!("{}", "task spawned and added to channel".to_string().blue());
             self.task_sender
@@ -187,6 +180,7 @@ pub mod build_an_executor_to_run_timer_future {
     pub struct Task {
         pub future: Mutex<Option<BoxFuture<'static, ()>>>,
         pub task_sender: SyncSender<Arc<Task>>,
+        pub task_name: &'static str,
     }
 
     impl ArcWake for Task {
@@ -219,14 +213,19 @@ pub mod build_an_executor_to_run_timer_future {
         use crate::build_a_timer_future_using_waker::TimerFuture;
         let (executor, spawner) = new_executor_and_spawner();
         let timer_future = TimerFuture::new(std::time::Duration::from_millis(1000));
+        let future2 = TimerFuture::new(std::time::Duration::from_millis(2000));
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = results.clone();
         // Spawn the timer_future using the spawner
-        spawner.spawn(async move {
-            results_clone.lock().unwrap().push("Start timer!");
-            timer_future.await;
-            results_clone.lock().unwrap().push("Stop timer!");
-        });
+        spawner.spawn(
+            async move {
+                results_clone.lock().unwrap().push("Start timer!");
+                timer_future.await;
+                results_clone.lock().unwrap().push("Stop timer!");
+            },
+            "task_1",
+        );
+        spawner.spawn(future2, "task_2");
         // run the executor
         drop(spawner);
         executor.run();
@@ -234,5 +233,44 @@ pub mod build_an_executor_to_run_timer_future {
             *results.lock().unwrap(),
             vec!["Start timer!", "Stop timer!"]
         );
+    }
+}
+
+pub mod local_set {
+
+    #[tokio::test]
+    async fn test_local_set() {
+        use crossterm::style::Stylize;
+        use std::rc::Rc;
+        use tokio::{task::LocalSet, time::sleep};
+        let non_send_data = Rc::new("!SEND_DATA");
+        let local_set = LocalSet::new();
+
+        let non_send_data_clone = non_send_data.clone();
+        let async_bloc_1 = async move {
+            println!(
+                "async_block_1: {}",
+                non_send_data_clone.as_ref().yellow().bold()
+            );
+        };
+        let join_handle_1 = local_set.spawn_local(async_bloc_1);
+        let _1it = local_set.run_until(join_handle_1).await;
+        let non_send_data_clone = non_send_data.clone();
+        let async_block2 = async move {
+            sleep(std::time::Duration::from_millis(100)).await;
+            println!(
+                "async_block_2: {}",
+                non_send_data_clone.as_ref().green().bold()
+            );
+        };
+        let _it = local_set.run_until(async_block2).await;
+        let non_send_data_clone = non_send_data.clone();
+        local_set.spawn_local(async move {
+            println!(
+                "async_block_3: {}",
+                non_send_data_clone.as_ref().blue().bold()
+            );
+        });
+        local_set.await;
     }
 }
