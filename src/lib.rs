@@ -326,7 +326,6 @@ pub mod demo_join_select_spawn {
 
 pub mod async_stream {
     use futures::Stream;
-    use futures::StreamExt;
     use std::pin::Pin;
 
     pub type PinnedInputStream = Pin<Box<dyn Stream<Item = Result<String, String>>>>;
@@ -351,6 +350,7 @@ pub mod async_stream {
 
     #[tokio::test]
     async fn test_async_stream() {
+        use futures::StreamExt;
         let mut count = 0;
         let mut it = create_input_stream();
         while let Some(event) = it.next().await {
