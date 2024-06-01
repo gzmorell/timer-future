@@ -63,7 +63,7 @@ pub mod build_a_timer_future_using_waker {
         let timer_future = TimerFuture::new(Duration::from_millis(10));
         let tf = timer_future.clone();
         assert!(!tf.completed());
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let start = std::time::Instant::now();
         timer_future.await;
         let stop = start.elapsed();
@@ -212,8 +212,8 @@ pub mod build_an_executor_to_run_timer_future {
     fn run_spawner_and_executor() {
         use crate::build_a_timer_future_using_waker::TimerFuture;
         let (executor, spawner) = new_executor_and_spawner();
-        let timer_future = TimerFuture::new(std::time::Duration::from_millis(1000));
-        let future2 = TimerFuture::new(std::time::Duration::from_millis(2000));
+        let timer_future = TimerFuture::new(std::time::Duration::from_millis(300));
+        let future2 = TimerFuture::new(std::time::Duration::from_millis(200));
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = results.clone();
         // Spawn the timer_future using the spawner
@@ -272,5 +272,93 @@ pub mod local_set {
             );
         });
         local_set.await;
+    }
+}
+
+pub mod demo_join_select_spawn {
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    pub async fn task_1() {
+        sleep(Duration::from_millis(100)).await;
+        println!("task_1");
+    }
+
+    pub async fn task_2() {
+        sleep(Duration::from_millis(100)).await;
+        println!("task_2");
+    }
+
+    pub async fn task_3() {
+        sleep(Duration::from_millis(100)).await;
+        println!("task_3");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_join() {
+        tokio::join!(task_1(), task_2(), task_3());
+        println!("All tasks completed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_select() {
+        tokio::select! {
+            _ = task_1() => println!("task_1 completed"),
+            _ = task_2() => println!("task_2 completed"),
+            _ = task_3() => println!("task_3 completed"),
+        }
+        println!("All tasks completed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_spawn() {
+        let handle_1 = tokio::spawn(task_1());
+        let handle_2 = tokio::spawn(task_2());
+        let handle_3 = tokio::spawn(task_3());
+
+        handle_1.await.unwrap();
+        handle_2.await.unwrap();
+        handle_3.await.unwrap();
+
+        println!("All tasks completed");
+    }
+}
+
+pub mod async_stream {
+    use futures::Stream;
+    use futures::StreamExt;
+    use std::pin::Pin;
+
+    pub type PinnedInputStream = Pin<Box<dyn Stream<Item = Result<String, String>>>>;
+
+    pub fn get_input_vec() -> Vec<String> {
+        vec![
+            "hello".to_string(),
+            "world".to_string(),
+            "foo".to_string(),
+            "bar".to_string(),
+        ]
+    }
+
+    pub fn create_input_stream() -> PinnedInputStream {
+        let it = async_stream::stream! {
+            for input in get_input_vec() {
+                yield Ok(input);
+            };
+        };
+        Box::pin(it)
+    }
+
+    #[tokio::test]
+    async fn test_async_stream() {
+        let mut count = 0;
+        let mut it = create_input_stream();
+        while let Some(event) = it.next().await {
+            eprintln!("event: {:?}", event);
+            let lhs = event.unwrap();
+            let rhs = get_input_vec()[count].clone();
+            assert_eq!(lhs, rhs);
+            count += 1;
+        }
     }
 }
